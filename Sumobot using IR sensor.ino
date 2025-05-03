@@ -24,7 +24,6 @@ int previousValue = 0;
 void turnRight();
 void turnLeft();
 void moveForward();
-void rotate();
 
 void setup() {
   
@@ -110,20 +109,3 @@ void turnLeft() {
   delay(800); // kayo na bahala mag adjust
 }
 
-void rotate() {
-  Serial.println("Revolve");
-
-  // Reverse
-  digitalWrite(in1, LOW);
-  digitalWrite(in2, HIGH);
-  digitalWrite(in3, LOW);
-  digitalWrite(in4, HIGH);
-  delay(200); // kayo na bahala mag adjust
-
-  // Turn left
-  analogWrite(in1, 100);
-  digitalWrite(in2, LOW);
-  digitalWrite(in3, LOW);
-  digitalWrite(in4, HIGH);
-  delay(800); // kayo na bahala mag adjust
-}
