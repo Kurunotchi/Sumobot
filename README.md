@@ -10,3 +10,6 @@ IR Sensor: The IR sensor helps the sumobot detect obstacles and detect opponents
 Switch: A simple power switch for turning the robot on and off.
 Ultrasonic Sensor (optional): An additional sensor that can be added for object or opponent detection. It uses sound waves to measure the distance to obstacles, providing another layer of situational awareness for the robot.
 The sumobot is equipped with basic autonomous behavior, including movement, obstacle detection, and the ability to respond to opponent actions. The ultrasonic sensor (if used) enhances its ability to detect the opponent's position, allowing it to navigate the battlefield effectively.
+
+Size and Weight:
+The robot can be up to 200mm by 200mm in size and weigh no more than 500 grams.
