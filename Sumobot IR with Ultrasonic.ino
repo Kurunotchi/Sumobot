@@ -10,16 +10,17 @@
 // Switch
 // Ultrasonic sensor for opponent detection
 
-#define darkline A5
+#define darkline A0
 
+//Ultrasonic sensor pins
 int trigpin = 5;
 int echopin = 6;
-
+//Motor Driver pins
 int in1 = 7;
 int in2 = 8;
 int in3 = 9;
 int in4 = 10;
-
+//Motor Driver enable pins for speed
 int ena = 2;
 int enb = 3;
 
