@@ -9,7 +9,6 @@
 //Battery - 18650
 //IR Sensor
 //Switch
-//Ultrasonic sensor if gusto niyo ng object or opponent detection
 
 const int darkline = A0;
 
