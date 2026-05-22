@@ -1,174 +1,271 @@
-// Sumobot code by Kurunotchi
-/* 20/03/2025 */
+/**
+ * @file Sumobot IR with Ultrasonic.ino
+ * @brief Autonomous Sumo Robot code using an IR sensor for ring edge detection
+ *        and an Ultrasonic sensor for opponent detection and tracking.
+ * @author Kurunotchi
+ * @date 2026-05-22 (Refactored)
+ * 
+ * Hardware Connections (Arduino Nano):
+ * - IR Line Sensor: Pin A0 (Digital Input)
+ * - Ultrasonic Sensor:
+ *   - Trig Pin: Pin 5
+ *   - Echo Pin: Pin 6
+ * - L298N Motor Driver Control Pins:
+ *   - IN1: Pin 7 (Left Motor Control 1)
+ *   - IN2: Pin 8 (Left Motor Control 2)
+ *   - IN3: Pin 9 (Right Motor Control 1)
+ *   - IN4: Pin 10 (Right Motor Control 2)
+ *   - ENA: Pin 2 (Left Motor Speed Enable, PWM)
+ *   - ENB: Pin 3 (Right Motor Speed Enable, PWM)
+ */
 
-// Components
-// Arduino Nano
-// Motor driver - L298n
-// DC geared motor
-// Battery - 18650
-// IR Sensor
-// Switch
-// Ultrasonic sensor for opponent detection
+// --- Pin Definitions ---
+const int PIN_IR_SENSOR = A0;   ///< Analog pin used as digital input for line sensor
+const int PIN_US_TRIG   = 5;    ///< Ultrasonic Trigger Pin
+const int PIN_US_ECHO   = 6;    ///< Ultrasonic Echo Pin
 
-#define darkline A0
+// L298N Motor Control Pins
+const int PIN_MOTOR_IN1 = 7;    ///< Left Motor Input 1
+const int PIN_MOTOR_IN2 = 8;    ///< Left Motor Input 2
+const int PIN_MOTOR_IN3 = 9;    ///< Right Motor Input 1
+const int PIN_MOTOR_IN4 = 10;   ///< Right Motor Input 2
+const int PIN_MOTOR_ENA = 2;    ///< Left Motor Speed (PWM)
+const int PIN_MOTOR_ENB = 3;    ///< Right Motor Speed (PWM)
 
-//Ultrasonic sensor pins
-int trigpin = 5;
-int echopin = 6;
-//Motor Driver pins
-int in1 = 7;
-int in2 = 8;
-int in3 = 9;
-int in4 = 10;
-//Motor Driver enable pins for speed
-int ena = 2;
-int enb = 3;
+// --- Sensor State Constants ---
+const int LINE_DETECTED = HIGH;   ///< Sensor reads HIGH on the black ring border
+const int SURFACE_WHITE = LOW;    ///< Sensor reads LOW on the white inside surface
 
-int darklineCount = 0;
-int previousValue = 0;
+// --- Speed Configurations (0 to 255) ---
+const int SPEED_CRUISE  = 150;    ///< Motor speed when searching/cruising
+const int SPEED_TURN    = 255;    ///< Motor speed during turn recovery
+const int SPEED_ATTACK  = 255;    ///< Motor speed during opponent charge
 
-void ultrasonic();
-void turnRight();
-void turnLeft();
+// --- Tactical Configurations ---
+const int OPPONENT_THRESHOLD_CM = 15;   ///< Detection threshold for opponent (in cm)
+const unsigned long ACTION_DELAY_MS = 800; ///< Recovery turn and backing duration (in ms)
+const int MAX_LINE_COUNT = 6;            ///< Reset count after this many line detections
+const bool BACKUP_BEFORE_PUSH = false;   ///< Set to true to back up before charging (legacy behavior)
+
+// --- Global Variables ---
+int darklineCount = 0;                  ///< Tracks consecutive line detections to alternate turn directions
+int previousValue = SURFACE_WHITE;       ///< Stores the previous sensor reading for edge detection
+
+// --- Function Prototypes ---
 void moveForward();
 void moveBackwards();
-void stopMotors();
+void turnRight();
+void turnLeft();
 void pushOpponent(int speed);
+void stopMotors();
+long readDistanceCm();
 
+/**
+ * @brief Initialize pins, serial communication, and setup start-up feedback.
+ */
 void setup() {
-  pinMode(trigpin, OUTPUT);
-  pinMode(echopin, INPUT);
+  // Ultrasonic Pin Configuration
+  pinMode(PIN_US_TRIG, OUTPUT);
+  pinMode(PIN_US_ECHO, INPUT);
 
-  pinMode(in1, OUTPUT);
-  pinMode(in2, OUTPUT);
-  pinMode(in3, OUTPUT);
-  pinMode(in4, OUTPUT);
+  // Motor Driver Control Pin Configuration
+  pinMode(PIN_MOTOR_IN1, OUTPUT);
+  pinMode(PIN_MOTOR_IN2, OUTPUT);
+  pinMode(PIN_MOTOR_IN3, OUTPUT);
+  pinMode(PIN_MOTOR_IN4, OUTPUT);
   
-  pinMode(ena, OUTPUT);
-  pinMode(enb, OUTPUT);
+  pinMode(PIN_MOTOR_ENA, OUTPUT);
+  pinMode(PIN_MOTOR_ENB, OUTPUT);
   
-  pinMode(darkline, INPUT);
+  // Line Sensor Pin Configuration
+  pinMode(PIN_IR_SENSOR, INPUT);
+  
+  // Debug Serial Setup
   Serial.begin(9600);
-  Serial.println("Sumobot Initialized.");
+  Serial.println(F("Sumobot IR & Ultrasonic Initialized. Ready for battle!"));
 }
 
+/**
+ * @brief Main execution loop containing the sumobot state logic.
+ */
 void loop() {
-  digitalWrite(trigpin, LOW);
-  delayMicroseconds(2);
-  digitalWrite(trigpin, HIGH);
-  delayMicroseconds(10);
-  digitalWrite(trigpin, LOW);
+  // Read sensors
+  int lineState = digitalRead(PIN_IR_SENSOR);
+  long distance = readDistanceCm();
 
-  long duration = pulseIn(echopin, HIGH);
-  long distance = (duration * 0.0343) / 2;
+  // Print line status to serial interface
+  Serial.print(F("IR Sensor Value: "));
+  Serial.print(lineState);
+  Serial.print(F(" ("));
+  Serial.print(lineState == LINE_DETECTED ? F("BLACK LINE") : F("WHITE SURFACE"));
+  Serial.println(F(")"));
 
-  int value = digitalRead(darkline);
-  Serial.print("IR Sensor Value: ");
-  Serial.println(value);
-  
-  if (value == 1 && previousValue == 0) {
+  // Check for White-to-Black border transition (Rising Edge)
+  if (lineState == LINE_DETECTED && previousValue == SURFACE_WHITE) {
     darklineCount++;
-    Serial.print("Dark Line Count: ");
+    Serial.print(F("Black Line Detected! Count: "));
     Serial.println(darklineCount);
-    delay(200);
 
-    if (darklineCount == 1 || darklineCount == 2 || darklineCount == 3) {
-      Serial.println("Turning Left due to Dark Line.");
+    // Alternate recovery directions based on detection count
+    if (darklineCount >= 1 && darklineCount <= 3) {
+      Serial.println(F("Recovering: Turning Left..."));
       turnLeft();
-    } else if (darklineCount == 4 || darklineCount == 5 || darklineCount == 6) {
-      Serial.println("Turning Right due to Dark Line.");
+    } else if (darklineCount >= 4 && darklineCount <= 6) {
+      Serial.println(F("Recovering: Turning Right..."));
       turnRight();
     }
-    if (darklineCount == 6) {
+    
+    // Reset counter once we complete a full cycle of turns
+    if (darklineCount >= MAX_LINE_COUNT) {
       darklineCount = 0;
-      Serial.println("Resetting Dark Line Count.");
+      Serial.println(F("Resetting Dark Line Count."));
     }
+    
+    // Save line state and exit early to avoid executing movements on stale distance reading
+    previousValue = LINE_DETECTED;
+    return;
   }
-  previousValue = value;
 
-  if (value == 0 && distance > 15) {
-    moveForward();
-  }
-  if (distance < 15) {
-    Serial.print("Opponent detected at distance: ");
-    Serial.println(distance);
-    pushOpponent(255);
+  // Update previous state value
+  previousValue = lineState;
+
+  // If safe inside the ring, proceed with search or attack
+  if (lineState == SURFACE_WHITE) {
+    if (distance > 0 && distance < OPPONENT_THRESHOLD_CM) {
+      Serial.print(F("Opponent detected at: "));
+      Serial.print(distance);
+      Serial.println(F(" cm! Charging!"));
+      pushOpponent(SPEED_ATTACK);
+    } else {
+      moveForward();
+    }
+  } else {
+    // Safety fallback: if we are still resting on the black line, halt to prevent driving out
+    Serial.println(F("Warning: Stuck on line. Stopping motors."));
+    stopMotors();
   }
 }
 
+/**
+ * @brief Measure the distance to the closest object in front of the robot.
+ * @return Distance in centimeters, or 999 if no object is within range (timeout).
+ */
+long readDistanceCm() {
+  // Send a clean 10-microsecond HIGH pulse to trigger the sensor
+  digitalWrite(PIN_US_TRIG, LOW);
+  delayMicroseconds(2);
+  digitalWrite(PIN_US_TRIG, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(PIN_US_TRIG, LOW);
+
+  // Read the return echo pulse. Timeout in 30,000 microseconds (~5 meters max)
+  long duration = pulseIn(PIN_US_ECHO, HIGH, 30000);
+
+  // duration is 0 if no pulse is received (timeout)
+  if (duration == 0) {
+    return 999; 
+  }
+
+  // Calculate distance: speed of sound is 343 m/s or 0.0343 cm/us
+  long distanceCm = (duration * 0.0343) / 2;
+  return distanceCm;
+}
+
+/**
+ * @brief Drive the robot straight forward at cruise speed.
+ */
 void moveForward() {
-  Serial.println("Moving Forward");
-  analogWrite(ena, 150);  
-  analogWrite(enb, 150);  
-  digitalWrite(in1, HIGH);
-  digitalWrite(in2, LOW);
-  digitalWrite(in3, LOW);
-  digitalWrite(in4, HIGH);
+  Serial.println(F("Moving Forward"));
+  analogWrite(PIN_MOTOR_ENA, SPEED_CRUISE);  
+  analogWrite(PIN_MOTOR_ENB, SPEED_CRUISE);  
+  digitalWrite(PIN_MOTOR_IN1, HIGH);
+  digitalWrite(PIN_MOTOR_IN2, LOW);
+  digitalWrite(PIN_MOTOR_IN3, LOW);
+  digitalWrite(PIN_MOTOR_IN4, HIGH);
 }
 
+/**
+ * @brief Drive both motors in reverse at full speed.
+ */
 void moveBackwards() {
-  Serial.println("Moving Backwards");
-  analogWrite(ena, 255); 
-  analogWrite(enb, 255);  
-  digitalWrite(in1, LOW);
-  digitalWrite(in2, HIGH);
-  digitalWrite(in3, HIGH);
-  digitalWrite(in4, LOW);
+  Serial.println(F("Moving Backwards"));
+  analogWrite(PIN_MOTOR_ENA, SPEED_TURN); 
+  analogWrite(PIN_MOTOR_ENB, SPEED_TURN);  
+  digitalWrite(PIN_MOTOR_IN1, LOW);
+  digitalWrite(PIN_MOTOR_IN2, HIGH);
+  digitalWrite(PIN_MOTOR_IN3, HIGH);
+  digitalWrite(PIN_MOTOR_IN4, LOW);
 }
 
+/**
+ * @brief Back up and pivot right.
+ */
 void turnRight() {
-  Serial.println("Turning Right");
-  analogWrite(ena, 255); 
-  analogWrite(enb, 255);  
-  digitalWrite(in1, LOW);
-  digitalWrite(in2, HIGH);
-  digitalWrite(in3, HIGH);
-  digitalWrite(in4, LOW);
-  delay(800);
-  digitalWrite(in1, HIGH);
-  digitalWrite(in2, LOW);
-  digitalWrite(in3, HIGH);
-  digitalWrite(in4, LOW);
-  delay(800);
+  // Step 1: Move backwards away from the border
+  moveBackwards();
+  delay(ACTION_DELAY_MS);
+  
+  // Step 2: Pivot right (left motor forward, right motor backward)
+  Serial.println(F("Pivoting Right"));
+  analogWrite(PIN_MOTOR_ENA, SPEED_TURN); 
+  analogWrite(PIN_MOTOR_ENB, SPEED_TURN);  
+  digitalWrite(PIN_MOTOR_IN1, HIGH);
+  digitalWrite(PIN_MOTOR_IN2, LOW);
+  digitalWrite(PIN_MOTOR_IN3, HIGH);
+  digitalWrite(PIN_MOTOR_IN4, LOW);
+  delay(ACTION_DELAY_MS);
 }
 
+/**
+ * @brief Back up and pivot left.
+ */
 void turnLeft() {
-  Serial.println("Turning Left");
-  analogWrite(ena, 255);  
-  analogWrite(enb, 255);  
-  digitalWrite(in1, LOW);
-  digitalWrite(in2, HIGH);
-  digitalWrite(in3, HIGH);
-  digitalWrite(in4, LOW);
-  delay(800);
-  digitalWrite(in1, LOW);
-  digitalWrite(in2, HIGH);
-  digitalWrite(in3, LOW);
-  digitalWrite(in4, HIGH);
-  delay(800);
+  // Step 1: Move backwards away from the border
+  moveBackwards();
+  delay(ACTION_DELAY_MS);
+  
+  // Step 2: Pivot left (left motor backward, right motor forward)
+  Serial.println(F("Pivoting Left"));
+  analogWrite(PIN_MOTOR_ENA, SPEED_TURN);  
+  analogWrite(PIN_MOTOR_ENB, SPEED_TURN);  
+  digitalWrite(PIN_MOTOR_IN1, LOW);
+  digitalWrite(PIN_MOTOR_IN2, HIGH);
+  digitalWrite(PIN_MOTOR_IN3, LOW);
+  digitalWrite(PIN_MOTOR_IN4, HIGH);
+  delay(ACTION_DELAY_MS);
 }
 
+/**
+ * @brief Engage and push the opponent.
+ * @param speed Speed level (0 - 255) to drive the motors.
+ */
 void pushOpponent(int speed) {
-  Serial.println("Pushing opponent");
-  analogWrite(ena, speed);  
-  analogWrite(enb, speed);  
-  digitalWrite(in1, LOW);
-  digitalWrite(in2, HIGH);
-  digitalWrite(in3, HIGH);
-  digitalWrite(in4, LOW);
-  delay(800);
-  digitalWrite(in1, HIGH);
-  digitalWrite(in2, LOW);
-  digitalWrite(in3, LOW);
-  digitalWrite(in4, HIGH);
+  if (BACKUP_BEFORE_PUSH) {
+    // Legacy wind-up maneuver
+    Serial.println(F("Pushing Opponent: Backing up first..."));
+    moveBackwards();
+    delay(ACTION_DELAY_MS);
+  }
+
+  // Charge forward at specified speed
+  Serial.println(F("Pushing Opponent: Charging forward!"));
+  analogWrite(PIN_MOTOR_ENA, speed);  
+  analogWrite(PIN_MOTOR_ENB, speed);  
+  digitalWrite(PIN_MOTOR_IN1, HIGH);
+  digitalWrite(PIN_MOTOR_IN2, LOW);
+  digitalWrite(PIN_MOTOR_IN3, LOW);
+  digitalWrite(PIN_MOTOR_IN4, HIGH);
 }
 
+/**
+ * @brief Stop both motors immediately.
+ */
 void stopMotors() {
-  Serial.println("Stopping motors");
-  analogWrite(ena, 0); 
-  analogWrite(enb, 0);  
-  digitalWrite(in1, LOW);
-  digitalWrite(in2, LOW);
-  digitalWrite(in3, LOW);
-  digitalWrite(in4, LOW);
+  Serial.println(F("Stopping motors"));
+  analogWrite(PIN_MOTOR_ENA, 0); 
+  analogWrite(PIN_MOTOR_ENB, 0);  
+  digitalWrite(PIN_MOTOR_IN1, LOW);
+  digitalWrite(PIN_MOTOR_IN2, LOW);
+  digitalWrite(PIN_MOTOR_IN3, LOW);
+  digitalWrite(PIN_MOTOR_IN4, LOW);
 }
