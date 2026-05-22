@@ -190,7 +190,3 @@ If the robot spins in place or moves backwards when it should move forward:
 3. Ensure the serial print outputs "Opponent detected at X cm! Charging!" only when the obstacle is within 15 cm.
 4. If the distance readings are constantly `999` or fluctuating wildly, verify that your Echo and Trigger pins are not swapped on the Arduino Nano.
 
----
-
-## 📜 License
-This project is open-source and available under the MIT License. Feel free to use and adapt it for your robot battles!
